@@ -3,6 +3,7 @@ using JiraMcpServer.Jira.Client;
 using JiraMcpServer.Tools;
 using JiraMcpServer.Tools.Attachments;
 using JiraMcpServer.Tools.Issues;
+using JiraMcpServer.Tools.Permissions;
 using JiraMcpServer.Tools.Projects;
 using JiraMcpServer.Tools.Prompts;
 using JiraMcpServer.Tools.Resources;
@@ -13,6 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
 namespace JiraMcpServer.Server;
@@ -47,6 +49,10 @@ public static class ServerSetup
 
     /// <summary>
     /// Register the MCP server plus every tool/prompt/resource. Shared by stdio and HTTP hosts.
+    /// When <c>JIRA_TOOLS</c> restricts the tool surface, request filters hide disallowed tools
+    /// from <c>tools/list</c> and reject <c>tools/call</c> for them — defense in depth so a
+    /// deployment scoped to <c>read</c> can never invoke a write tool even if a client bypasses
+    /// the listing.
     /// </summary>
     public static IMcpServerBuilder AddJiraMcpServer(
         this IServiceCollection services,
@@ -74,6 +80,56 @@ public static class ServerSetup
             .WithTools<AttachmentTools>()
             .WithTools<WorklogTools>()
             .WithPrompts<PromptTemplates>()
-            .WithResources<JiraResources>();
+            .WithResources<JiraResources>()
+            .WithRequestFilters(filters => filters.AddToolPermissionFilters());
+    }
+
+    /// <summary>
+    /// Register the two request filters that enforce the configured <c>JIRA_TOOLS</c>
+    /// allowlist: <c>ListTools</c> hides disallowed tools, and <c>CallTool</c> rejects calls to
+    /// them with an <c>isError</c> result. Both resolve the live <see cref="CompiledConfig"/>
+    /// from the request scope, so a token rotation or config reload takes effect without a rebuild.
+    /// </summary>
+    private static IMcpRequestFilterBuilder AddToolPermissionFilters(this IMcpRequestFilterBuilder builder)
+    {
+        builder.AddListToolsFilter(next => async (context, cancellationToken) =>
+        {
+            var result = await next(context, cancellationToken);
+            var config = context.Services?.GetService<CompiledConfig>();
+            if (config is null || config.AllowAllTools)
+            {
+                return result;
+            }
+
+            result.Tools = result.Tools
+                .Where(static tool => tool.Name is not null)
+                .Where(tool => config.ToolAllowlist!.Contains(tool.Name!))
+                .ToList();
+            return result;
+        });
+
+        builder.AddCallToolFilter(next => async (context, cancellationToken) =>
+        {
+            var config = context.Services?.GetService<CompiledConfig>();
+            var name = context.Params?.Name;
+            if (config is not null && !config.AllowAllTools && name is not null &&
+                !config.ToolAllowlist!.Contains(name))
+            {
+                return new CallToolResult
+                {
+                    Content = [new TextContentBlock
+                    {
+                        Text = $"Tool '{name}' is not enabled. The server's JIRA_TOOLS allowlist " +
+                            $"[{string.Join(", ", config.ToolAllowlist.OrderBy(static n => n))}] " +
+                            $"does not include it; ask the operator to add it or widen the scope.",
+                    }],
+                    IsError = true,
+                };
+            }
+
+            return await next(context, cancellationToken);
+        });
+
+        return builder;
     }
 }

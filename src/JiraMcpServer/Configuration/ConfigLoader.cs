@@ -41,6 +41,15 @@ public sealed class CompiledConfig
 
     public bool AllowAllProjects => ConfiguredProjectKeys.Count == 0;
 
+    /// <summary>
+    /// Resolved tool allowlist. <c>null</c> means every tool is enabled (no <c>tools</c>
+    /// configured); a non-empty set means only those tool names may be listed or invoked.
+    /// </summary>
+    public IReadOnlySet<string>? ToolAllowlist { get; init; }
+
+    /// <summary>True when no tool restriction is configured, i.e. every tool is enabled.</summary>
+    public bool AllowAllTools => ToolAllowlist is null || ToolAllowlist.Count == 0;
+
     /// <summary>The (method, path) pair for issue search, resolved from <see cref="SearchEngine"/>.</summary>
     public (string Method, string Path) SearchApiPaths =>
         SearchEngine == "get"
@@ -225,11 +234,10 @@ public static class ConfigLoader
         var requestTimeout = ParseDouble(config["request_timeout"], 30, "JIRA_REQUEST_TIMEOUT");
         var connectTimeout = ParseDouble(config["connect_timeout"], 10, "JIRA_CONNECT_TIMEOUT");
 
-        // Fail fast: a misspelled keyword/tool must abort startup, not drop tools.
-        if (!string.IsNullOrEmpty(tools))
-        {
-            Permissions.ParseTools(tools);
-        }
+        // Fail fast: a misspelled keyword/tool must abort startup, not drop tools. ParseTools
+        // also expands category keywords (read/create/update/delete/write) into concrete tool
+        // names, yielding the allowlist the request filters enforce at tools/list and tools/call.
+        var toolAllowlist = string.IsNullOrEmpty(tools) ? null : Permissions.ParseTools(tools);
 
         return new CompiledConfig
         {
@@ -239,6 +247,7 @@ public static class ConfigLoader
             ApiToken = apiToken,
             ProjectKeys = projectKeys,
             Tools = tools,
+            ToolAllowlist = toolAllowlist,
             SearchEngine = searchEngine,
             RateLimit = rateLimit,
             RequestTimeout = requestTimeout,

@@ -150,6 +150,31 @@ flowchart TB
     style SERVER fill:#eef,stroke:#339
 ```
 
+### Tool Permission Enforcement
+
+When `tools` is configured (e.g. `read`), the server applies the allowlist at two layers.
+A tool must pass both to reach Jira.
+
+```mermaid
+flowchart TD
+    CFG["appsettings / JIRA_TOOLS<br/>e.g. read"] --> PARSE["Permissions.ParseTools<br/>expand read -> 18 tool names"]
+    PARSE --> ALLOW["CompiledConfig.ToolAllowlist<br/>null/empty = all allowed"]
+
+    LIST["tools/list request"] --> LF["ListToolsFilter"]
+    LF -- "drop disallowed tools" --> LISTRES["client sees only<br/>allowed tools"]
+
+    CALL["tools/call request<br/>name=jira_add_comment"] --> CF["CallToolFilter"]
+    CF -- "name not in allowlist?" --> REJ["isError=true<br/>'Tool not enabled'"]
+    CF -- "name allowed" --> EXEC["invoke tool -> Jira"]
+
+    ALLOW -.-> LF
+    ALLOW -.-> CF
+
+    style REJ fill:#fee,stroke:#c33
+    style EXEC fill:#efe,stroke:#393
+    style ALLOW fill:#eef,stroke:#339
+```
+
 ---
 
 ## Quick Start
@@ -222,7 +247,7 @@ CLI flags (e.g. `--search-engine`) have the highest priority.
 | `user_email` | `JIRA_USER_EMAIL` | account email for basic auth | required for basic |
 | `api_token` | `JIRA_API_TOKEN` | Jira API token | — (required) |
 | `project_keys` | `JIRA_PROJECT_KEYS` | write allowlist, comma-separated; empty = all | — |
-| `tools` | `JIRA_TOOLS` | tool allowlist: `read,create,update,delete,write` or tool names | empty = all |
+| `tools` | `JIRA_TOOLS` | tool allowlist: `read,create,update,delete,write` and/or tool names (comma-separated). Enforced on both `tools/list` (hidden) and `tools/call` (rejected). `read` exposes only the 18 read-only tools; `read,update` adds the 2 update tools, etc. Empty/unset = all 27 tools. | empty = all |
 | `search_engine` | `JIRA_SEARCH_ENGINE` | `jql` (default) / `get` / `auto` (enhanced search/jql endpoint) | `jql` |
 | `rate_limit` | `JIRA_RATE_LIMIT` | max requests per minute | `100` |
 | `request_timeout` | `JIRA_REQUEST_TIMEOUT` | request timeout in seconds | `30` |
@@ -440,8 +465,21 @@ All 27 tools, grouped by module. Each tool's parameters are exposed to clients v
 4. **JQL injection guard** — `Jql.Build` is the single JQL composer; all literals are escaped
    via `EscapeValue` to prevent injection.
 
-5. **Tool-level permissions** — `tools` config can restrict by category
-   (`read/create/update/delete/write`) or tool name; typos fail fast at startup.
+5. **Tool-level permissions** — `tools` config restricts which tools are usable. Categories
+   `read/create/update/delete/write` expand to concrete tool names; individual names can also be
+   listed (comma-separated, e.g. `read,update`). Enforcement is defense-in-depth via two MCP
+   request filters: `tools/list` hides disallowed tools so the model never advertises them, and
+   `tools/call` rejects calls to them with an `isError` result — so a deployment scoped to `read`
+   can never invoke a write tool even if a client bypasses the listing. Typos fail fast at
+   startup. Every one of the 27 tools is mapped to exactly one category (verified: no omissions,
+   no overlaps):
+
+| Category | Tool count | Example tools |
+|---|---|---|
+| `read` | 18 | `jira_get_issue`, `jira_search_issues`, `jira_list_projects` |
+| `create` | 6 | `jira_create_issue`, `jira_add_comment`, `jira_add_attachment`, `jira_add_worklog`, `jira_link_issues`, `jira_move_issues_to_sprint` |
+| `update` | 2 | `jira_update_issue`, `jira_transition_issue` |
+| `delete` | 1 | `jira_delete_issue` |
 
 6. **HTTPS enforced** — `base_url` must start with `https://`; plaintext HTTP is refused.
 
