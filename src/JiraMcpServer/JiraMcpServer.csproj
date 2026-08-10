@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>JiraMcpServer</RootNamespace>
@@ -15,18 +15,15 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Microsoft.Extensions.* and System.Threading.RateLimiting are resolved
-         transitively from the MCP SDK (2.1.0 pulls the 10.0.x line, which
-         multi-targets net8.0). The explicit pins mirror that graph so the
-         configuration helpers and token bucket limiter are available. -->
-    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.10" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.10" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.10" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.10" />
+    <!-- Microsoft.Extensions.* and System.Threading.RateLimiting are part of the
+         .NET 10 shared framework, where MCP SDK (2.1.0) resolves its net10.0
+         assets; explicit PackageReferences are unnecessary (NU1510 would flag
+         them). The configuration helpers and token bucket limiter are available
+         from the framework.
+         See https://learn.microsoft.com/dotnet/core/compatibility/10.0/... -->
     <PackageReference Include="ModelContextProtocol" Version="2.1.0" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.1.0" />
     <PackageReference Include="System.CommandLine" Version="2.0.10" />
-    <PackageReference Include="System.Threading.RateLimiting" Version="10.0.10" />
     <PackageReference Include="Tomlyn" Version="2.10.1" />
   </ItemGroup>
 

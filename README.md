@@ -1,10 +1,10 @@
 # Jira MCP Server (.NET)
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![.NET](https://img.shields.io/badge/.NET-8.0-512bd4.svg)](https://dotnet.microsoft.com/)
+[![.NET](https://img.shields.io/badge/.NET-10.0-512bd4.svg)](https://dotnet.microsoft.com/)
 [![MCP](https://img.shields.io/badge/MCP-2.1.0-6f42c1.svg)](https://modelcontextprotocol.io/)
 
-A Model Context Protocol (MCP) server for Jira, implemented in C# / .NET 8. It exposes the
+A Model Context Protocol (MCP) server for Jira, implemented in C# / .NET 10. It exposes the
 Jira Cloud REST and Agile APIs as 27 MCP tools, 4 prompt templates, and 4 resources, so MCP
 clients such as Claude Code, Claude Desktop, and Cursor can read and write Jira issues directly.
 
@@ -49,7 +49,7 @@ flowchart LR
         CC["Claude Code / Desktop / Cursor"]
     end
 
-    subgraph Server["jira-mcp-server (.NET 8)"]
+    subgraph Server["jira-mcp-server (.NET 10)"]
         direction TB
         TR["Transport<br/>stdio or HTTP"]
         MCP["Protocol Layer<br/>Tools · Prompts · Resources"]
@@ -181,7 +181,7 @@ flowchart TD
 
 ### Prerequisites
 
-- .NET SDK 8.0+ ([download](https://dotnet.microsoft.com/download))
+- .NET SDK 10.0+ ([download](https://dotnet.microsoft.com/download))
 - A Jira Cloud instance + API Token (create one at
   [https://id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens))
 
@@ -310,7 +310,7 @@ Or use the built binary directly (faster startup):
 {
   "mcpServers": {
     "jira": {
-      "command": "E:/bs/code/others/jira_mcp_server_net/src/JiraMcpServer/bin/Debug/net8.0/jira-mcp-server.exe",
+      "command": "E:/bs/code/others/jira_mcp_server_net/src/JiraMcpServer/bin/Debug/net10.0/jira-mcp-server.exe",
       "args": ["--transport", "stdio"]
     }
   }
@@ -536,7 +536,7 @@ dotnet test JiraMcpServer.slnx
 
 ### Tech stack
 
-- .NET 8, C# 12
+- .NET 10, C# 13
 - [ModelContextProtocol SDK 2.1.0](https://www.nuget.org/packages/ModelContextProtocol) — MCP protocol
 - [System.CommandLine 2.0.10](https://www.nuget.org/packages/System.CommandLine) — CLI parsing
 - ASP.NET Core Kestrel — HTTP transport
