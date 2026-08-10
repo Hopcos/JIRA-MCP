@@ -58,3 +58,5 @@ jira_server.toml
 jira_server.json
 *.token
 token-file
+
+.models/
