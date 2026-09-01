@@ -28,6 +28,10 @@ public static class Permissions
         "jira_get_worklogs",
         "jira_search_users",
         "jira_get_myself",
+        "confluence_get_page",
+        "confluence_search",
+        "confluence_list_spaces",
+        "confluence_get_space",
     };
 
     public static readonly IReadOnlySet<string> CreateTools = new HashSet<string>(StringComparer.OrdinalIgnoreCase)

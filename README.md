@@ -4,9 +4,11 @@
 [![.NET](https://img.shields.io/badge/.NET-10.0-512bd4.svg)](https://dotnet.microsoft.com/)
 [![MCP](https://img.shields.io/badge/MCP-2.1.0-6f42c1.svg)](https://modelcontextprotocol.io/)
 
-A Model Context Protocol (MCP) server for Jira, implemented in C# / .NET 10. It exposes the
-Jira Cloud REST and Agile APIs as 27 MCP tools, 4 prompt templates, and 4 resources, so MCP
-clients such as Claude Code, Claude Desktop, and Cursor can read and write Jira issues directly.
+A Model Context Protocol (MCP) server for Jira **and Confluence**, implemented in C# / .NET 10.
+It exposes the Jira Cloud REST and Agile APIs as 23 MCP tools (issue CRUD, search, comments,
+boards, …) plus the Confluence Cloud REST API as 4 read-only wiki/page/space tools, together with
+4 prompt templates and 4 resources, so MCP clients such as Claude Code, Claude Desktop, and Cursor
+can read and write Jira issues and read Confluence pages directly.
 
 ---
 
@@ -28,12 +30,13 @@ clients such as Claude Code, Claude Desktop, and Cursor can read and write Jira 
 
 ## Features
 
-- **27 tools** — issue CRUD, search, comments, links, transitions, attachments, worklogs, boards/sprints
+- **23 Jira tools** — issue CRUD, search, comments, links, transitions, attachments, worklogs, boards/sprints
+- **4 Confluence read tools** — get page (by id/URL/title), CQL search, list/get spaces, with ADF-based text rendering
 - **4 prompt templates** — bug report, sprint review, triage, daily standup
 - **4 MCP resources** — projects, project meta, issue snapshot, transitions
 - **Dual transport** — stdio (local, default) and Streamable HTTP (team-shared)
 - **Server-side-only credentials** — never on the client command line or wire
-- **Defense in depth** — project allowlist, JQL injection guard, tool-level permissions, token log masking
+- **Defense in depth** — project allowlist, JQL/CQL injection guards, tool-level permissions, token log masking
 - **Resilience** — client token-bucket rate limiting + exponential backoff retry (with 429 Retry-After)
 - **Config fixed in `appsettings.json`**, overridable by env vars and CLI
 
@@ -365,8 +368,8 @@ Claude will automatically call `jira_search_issues`.
 
 ## Tools Reference
 
-All 27 tools, grouped by module. Each tool's parameters are exposed to clients via the MCP
-`inputSchema`.
+All 27 tools (23 Jira + 4 Confluence), grouped by module. Each tool's parameters are exposed to
+clients via the MCP `inputSchema`.
 
 ### Issues (14)
 
@@ -425,6 +428,20 @@ All 27 tools, grouped by module. Each tool's parameters are exposed to clients v
 | `jira_add_worklog` | log time spent (e.g. `2h 30m`) |
 | `jira_get_worklogs` | get worklogs for an issue |
 
+### Confluence (4, read-only)
+
+Reads use the Confluence Cloud classic API (`/wiki/rest/api`) with the same server-side
+credentials, rate limiting, retry, and token masking as the Jira tools. ADF page bodies are
+rendered to readable plain text; page URLs are parsed so a pasted
+`…/wiki/spaces/KEY/pages/12345/Title` link works directly.
+
+| Tool | Description |
+|---|---|
+| `confluence_get_page` | fetch a page by id, full page URL, or title; returns title, space, URL, and rendered body text |
+| `confluence_search` | search pages/content with CQL (e.g. `space = 'PE' AND text ~ 'bonus'`) |
+| `confluence_list_spaces` | list accessible Confluence spaces (key, name, type) |
+| `confluence_get_space` | fetch a single Confluence space by key |
+
 ---
 
 ## Prompts & Resources
@@ -476,7 +493,7 @@ All 27 tools, grouped by module. Each tool's parameters are exposed to clients v
 
 | Category | Tool count | Example tools |
 |---|---|---|
-| `read` | 18 | `jira_get_issue`, `jira_search_issues`, `jira_list_projects` |
+| `read` | 22 | `jira_get_issue`, `jira_search_issues`, `jira_list_projects`, `confluence_get_page`, `confluence_search`, `confluence_list_spaces`, `confluence_get_space` |
 | `create` | 6 | `jira_create_issue`, `jira_add_comment`, `jira_add_attachment`, `jira_add_worklog`, `jira_link_issues`, `jira_move_issues_to_sprint` |
 | `update` | 2 | `jira_update_issue`, `jira_transition_issue` |
 | `delete` | 1 | `jira_delete_issue` |
@@ -512,13 +529,18 @@ src/JiraMcpServer/
 ├── Configuration/ConfigLoader.cs layered config + validation
 ├── Jira/
 │   ├── Client/JiraClient.cs      HTTP client: rate-limit + retry + paging
+│   ├── Client/ConfluenceClient.cs Confluence classic API client (shares Jira pipeline)
 │   ├── Errors/JiraError.cs       error hierarchy
 │   ├── Formatters/Adf.cs         ADF <-> text
+│   ├── Formatters/ConfluenceAdf.cs Confluence ADF renderer (tables, panels, media)
+│   ├── Formatters/HtmlToText.cs  HTML fallback for storage bodies
 │   ├── Safety/Safety.cs          masking, sanitizing
 │   └── Validators/Jql.cs         safe JQL builder
+│   └── Validators/Cql.cs         safe CQL builder
+│   └── Validators/ConfluenceUrl.cs page-URL parser
 ├── Server/ServerSetup.cs         shared DI wiring (tools/prompts/resources)
 ├── Tools/                        MCP tool/prompt/resource definitions
-│   ├── Issues/  Projects/  Sprints/  Users/  Attachments/  Worklog/
+│   ├── Issues/  Projects/  Sprints/  Users/  Attachments/  Worklog/  Confluence/
 │   ├── Prompts/  Resources/  Permissions/  Serde/
 │   └── JiraToolContext.cs         per-request context
 └── Transport/

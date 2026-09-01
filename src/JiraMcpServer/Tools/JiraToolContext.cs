@@ -20,6 +20,13 @@ public sealed class JiraToolContext
     public required ILogger Logger { get; init; }
 
     /// <summary>
+    /// Scoped Confluence client, resolved from the Jira client's HTTP pipeline. This is injected
+    /// by <see cref="Server.ServerSetup.AddJiraServerServices"/> so Confluence tools can share the
+    /// same credentials, rate limiter, and retry semantics as the Jira tools.
+    /// </summary>
+    public required ConfluenceClient Confluence { get; init; }
+
+    /// <summary>
     /// Annotate a search payload with the effective project scope. When a project whitelist is
     /// configured, JQL is injected with a <c>project in (...)/project = "..."</c> clause the model
     /// may not be aware of; attaching the scope lets the model understand why a search returns

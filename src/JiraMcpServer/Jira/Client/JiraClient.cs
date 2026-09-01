@@ -93,6 +93,14 @@ public sealed class JiraClient : IDisposable
     public int MaxRetries { get; }
 
     /// <summary>
+    /// The underlying <see cref="HttpClient"/>, exposed so sibling clients (e.g.
+    /// <see cref="ConfluenceClient"/>) can share the same BaseAddress, auth headers, and handler
+    /// without duplicating the transport pipeline. The caller must not dispose it; this client
+    /// owns it.
+    /// </summary>
+    public HttpClient Http => _http;
+
+    /// <summary>
     /// Build the Authorization header from the live settings on every call, so a token rotation
     /// in the environment takes effect on the next request without a restart.
     /// </summary>

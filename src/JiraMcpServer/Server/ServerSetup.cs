@@ -2,6 +2,7 @@ using JiraMcpServer.Configuration;
 using JiraMcpServer.Jira.Client;
 using JiraMcpServer.Tools;
 using JiraMcpServer.Tools.Attachments;
+using JiraMcpServer.Tools.Confluence;
 using JiraMcpServer.Tools.Issues;
 using JiraMcpServer.Tools.Permissions;
 using JiraMcpServer.Tools.Projects;
@@ -38,9 +39,11 @@ public static class ServerSetup
             var logger = sp.GetRequiredService<ILogger<JiraClient>>();
             return new JiraClient(config, logger: logger);
         });
+        services.AddScoped(sp => new ConfluenceClient(sp.GetRequiredService<JiraClient>()));
         services.AddScoped(sp => new JiraToolContext
         {
             Client = sp.GetRequiredService<JiraClient>(),
+            Confluence = sp.GetRequiredService<ConfluenceClient>(),
             Settings = sp.GetRequiredService<CompiledConfig>(),
             Logger = sp.GetRequiredService<ILogger<JiraToolContext>>(),
         });
@@ -79,6 +82,7 @@ public static class ServerSetup
             .WithTools<UserTools>()
             .WithTools<AttachmentTools>()
             .WithTools<WorklogTools>()
+            .WithTools<ConfluenceTools>()
             .WithPrompts<PromptTemplates>()
             .WithResources<JiraResources>()
             .WithRequestFilters(filters => filters.AddToolPermissionFilters());
