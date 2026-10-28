@@ -51,6 +51,7 @@ TestResults/
 ## Local secrets — never commit real Jira credentials or runtime config overrides
 appsettings.*.json
 appsettings.*.Development.json
+appsettings.*.hopcos.json
 secrets.json
 *.env
 .env

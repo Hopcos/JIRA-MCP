@@ -35,6 +35,9 @@
   <ItemGroup>
     <!-- Ship the server configuration fixed to appsettings.json next to the executable, so a bare
          launch command picks it up from either the working directory or the executable directory. -->
+    <None Update="appsettings.hopcos.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
