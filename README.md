@@ -4,11 +4,21 @@
 [![.NET](https://img.shields.io/badge/.NET-10.0-512bd4.svg)](https://dotnet.microsoft.com/)
 [![MCP](https://img.shields.io/badge/MCP-2.1.0-6f42c1.svg)](https://modelcontextprotocol.io/)
 
+> **English** | [简体中文](README.zh.md)
+
 A Model Context Protocol (MCP) server for Jira **and Confluence**, implemented in C# / .NET 10.
 It exposes the Jira Cloud REST and Agile APIs as 23 MCP tools (issue CRUD, search, comments,
 boards, …) plus the Confluence Cloud REST API as 4 read-only wiki/page/space tools, together with
 4 prompt templates and 4 resources, so MCP clients such as Claude Code, Claude Desktop, and Cursor
 can read and write Jira issues and read Confluence pages directly.
+
+## Recent Changes
+
+- **Fixed `jira_update_issue` / `jira_transition_issue` / `jira_create_issue` throwing
+  `InvalidOperationException: The node already has a parent.`** — values parsed from the tool's
+  `fields` argument were still attached to their source `JsonObject` and failed when re-parented into
+  a freshly built request body. Each value is now deep-cloned before it is placed into the request
+  body. Regression tests cover all three paths.
 
 ---
 

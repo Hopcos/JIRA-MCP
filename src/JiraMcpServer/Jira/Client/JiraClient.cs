@@ -518,7 +518,8 @@ public sealed class JiraClient : IDisposable
         {
             foreach (var (key, value) in customFields)
             {
-                fields[key] = value;
+                // Deep-clone each value before re-parenting (see UpdateIssueAsync).
+                fields[key] = value?.DeepClone();
             }
         }
 
@@ -535,7 +536,10 @@ public sealed class JiraClient : IDisposable
         var body = new JsonObject();
         if (fields is { Count: > 0 })
         {
-            body["fields"] = new JsonObject(fields.Select(static pair => new KeyValuePair<string, JsonNode?>(pair.Key, pair.Value)));
+            // Deep-clone each value before re-parenting it: a JsonNode value that is still attached
+            // to its source JsonObject (e.g. one parsed from the tool's `fields` argument) throws
+            // InvalidOperationException("The node already has a parent.") when added to a new container.
+            body["fields"] = new JsonObject(fields.Select(static pair => new KeyValuePair<string, JsonNode?>(pair.Key, pair.Value?.DeepClone())));
         }
 
         var query = new Dictionary<string, string?>();
@@ -563,7 +567,9 @@ public sealed class JiraClient : IDisposable
         var body = new JsonObject { ["transition"] = new JsonObject { ["id"] = transitionId } };
         if (fields is { Count: > 0 })
         {
-            body["fields"] = new JsonObject(fields.Select(static pair => new KeyValuePair<string, JsonNode?>(pair.Key, pair.Value)));
+            // Deep-clone each value (see UpdateIssueAsync) to avoid re-parenting a node that is
+            // still attached to its source JsonObject.
+            body["fields"] = new JsonObject(fields.Select(static pair => new KeyValuePair<string, JsonNode?>(pair.Key, pair.Value?.DeepClone())));
         }
 
         await RequestAsync(HttpMethod.Post, $"/rest/api/3/issue/{issueKey}/transitions", jsonBody: body, cancellationToken: cancellationToken);
