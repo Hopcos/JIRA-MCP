@@ -8,9 +8,9 @@
 
 A Model Context Protocol (MCP) server for Jira **and Confluence**, implemented in C# / .NET 10.
 It exposes the Jira Cloud REST and Agile APIs as 23 MCP tools (issue CRUD, search, comments,
-boards, …) plus the Confluence Cloud REST API as 4 read-only wiki/page/space tools, together with
+boards, …) plus the Confluence Cloud REST API as 6 wiki/page/space tools (4 read, 2 write), together with
 4 prompt templates and 4 resources, so MCP clients such as Claude Code, Claude Desktop, and Cursor
-can read and write Jira issues and read Confluence pages directly.
+can read and write Jira issues and read, create, and update Confluence pages directly.
 
 ## Recent Changes
 
@@ -41,7 +41,7 @@ can read and write Jira issues and read Confluence pages directly.
 ## Features
 
 - **23 Jira tools** — issue CRUD, search, comments, links, transitions, attachments, worklogs, boards/sprints
-- **4 Confluence read tools** — get page (by id/URL/title), CQL search, list/get spaces, with ADF-based text rendering
+- **6 Confluence tools** — get page (by id/URL/title), CQL search, list/get spaces, with ADF-based text rendering; plus create page and write page content (Markdown or storage format)
 - **4 prompt templates** — bug report, sprint review, triage, daily standup
 - **4 MCP resources** — projects, project meta, issue snapshot, transitions
 - **Dual transport** — stdio (local, default) and Streamable HTTP (team-shared)
@@ -260,7 +260,7 @@ CLI flags (e.g. `--search-engine`) have the highest priority.
 | `user_email` | `JIRA_USER_EMAIL` | account email for basic auth | required for basic |
 | `api_token` | `JIRA_API_TOKEN` | Jira API token | — (required) |
 | `project_keys` | `JIRA_PROJECT_KEYS` | write allowlist, comma-separated; empty = all | — |
-| `tools` | `JIRA_TOOLS` | tool allowlist: `read,create,update,delete,write` and/or tool names (comma-separated). Enforced on both `tools/list` (hidden) and `tools/call` (rejected). `read` exposes only the 18 read-only tools; `read,update` adds the 2 update tools, etc. Empty/unset = all 27 tools. | empty = all |
+| `tools` | `JIRA_TOOLS` | tool allowlist: `read,create,update,delete,write` and/or tool names (comma-separated). Enforced on both `tools/list` (hidden) and `tools/call` (rejected). `read` exposes only the 22 read-only tools; `read,update` adds the 3 update tools, etc. Empty/unset = all 29 tools. | empty = all |
 | `search_engine` | `JIRA_SEARCH_ENGINE` | `jql` (default) / `get` / `auto` (enhanced search/jql endpoint) | `jql` |
 | `rate_limit` | `JIRA_RATE_LIMIT` | max requests per minute | `100` |
 | `request_timeout` | `JIRA_REQUEST_TIMEOUT` | request timeout in seconds | `30` |
@@ -368,7 +368,7 @@ In Claude Code, run:
 /mcp
 ```
 
-You should see the `jira` server and its 27 tools. Then converse naturally:
+You should see the `jira` server and its 29 tools. Then converse naturally:
 
 > "Search all unclosed bugs in project PROJ"
 
@@ -378,7 +378,7 @@ Claude will automatically call `jira_search_issues`.
 
 ## Tools Reference
 
-All 27 tools (23 Jira + 4 Confluence), grouped by module. Each tool's parameters are exposed to
+All 29 tools (23 Jira + 6 Confluence), grouped by module. Each tool's parameters are exposed to
 clients via the MCP `inputSchema`.
 
 ### Issues (14)
@@ -438,7 +438,7 @@ clients via the MCP `inputSchema`.
 | `jira_add_worklog` | log time spent (e.g. `2h 30m`) |
 | `jira_get_worklogs` | get worklogs for an issue |
 
-### Confluence (4, read-only)
+### Confluence (6: 4 read, 2 write)
 
 Reads use the Confluence Cloud classic API (`/wiki/rest/api`) with the same server-side
 credentials, rate limiting, retry, and token masking as the Jira tools. ADF page bodies are
@@ -451,6 +451,17 @@ rendered to readable plain text; page URLs are parsed so a pasted
 | `confluence_search` | search pages/content with CQL (e.g. `space = 'PE' AND text ~ 'bonus'`) |
 | `confluence_list_spaces` | list accessible Confluence spaces (key, name, type) |
 | `confluence_get_space` | fetch a single Confluence space by key |
+| `confluence_create_page` | create a page in a space (optionally under a parent page) and write its content |
+| `confluence_update_page` | write content to an existing page: replace the whole body or append to it; the version is bumped automatically and the title can be changed |
+
+The write tools accept the content as **Markdown** (default; headings, bullet/numbered/nested
+lists, tables, fenced code blocks, blockquotes, bold/italic/strike/inline code and links are
+converted to Confluence storage format) or as raw Confluence **storage-format** XHTML via
+`body_format='storage'`. Literal `<`/`&` in Markdown are escaped, and `javascript:`-style link
+schemes are dropped. `confluence_create_page` is in the `create` permission category and
+`confluence_update_page` in `update`, so a `read`-scoped deployment never exposes them.
+Page deletion is intentionally not offered; an update with an empty body is rejected so a page
+can't be blanked by accident (earlier versions stay in the page history).
 
 ---
 
@@ -498,14 +509,14 @@ rendered to readable plain text; page URLs are parsed so a pasted
    request filters: `tools/list` hides disallowed tools so the model never advertises them, and
    `tools/call` rejects calls to them with an `isError` result — so a deployment scoped to `read`
    can never invoke a write tool even if a client bypasses the listing. Typos fail fast at
-   startup. Every one of the 27 tools is mapped to exactly one category (verified: no omissions,
+   startup. Every one of the 29 tools is mapped to exactly one category (verified: no omissions,
    no overlaps):
 
 | Category | Tool count | Example tools |
 |---|---|---|
 | `read` | 22 | `jira_get_issue`, `jira_search_issues`, `jira_list_projects`, `confluence_get_page`, `confluence_search`, `confluence_list_spaces`, `confluence_get_space` |
-| `create` | 6 | `jira_create_issue`, `jira_add_comment`, `jira_add_attachment`, `jira_add_worklog`, `jira_link_issues`, `jira_move_issues_to_sprint` |
-| `update` | 2 | `jira_update_issue`, `jira_transition_issue` |
+| `create` | 7 | `jira_create_issue`, `jira_add_comment`, `jira_add_attachment`, `jira_add_worklog`, `jira_link_issues`, `jira_move_issues_to_sprint`, `confluence_create_page` |
+| `update` | 3 | `jira_update_issue`, `jira_transition_issue`, `confluence_update_page` |
 | `delete` | 1 | `jira_delete_issue` |
 
 6. **HTTPS enforced** — `base_url` must start with `https://`; plaintext HTTP is refused.
@@ -543,6 +554,7 @@ src/JiraMcpServer/
 │   ├── Errors/JiraError.cs       error hierarchy
 │   ├── Formatters/Adf.cs         ADF <-> text
 │   ├── Formatters/ConfluenceAdf.cs Confluence ADF renderer (tables, panels, media)
+│   ├── Formatters/ConfluenceStorage.cs Markdown → Confluence storage format (for page writes)
 │   ├── Formatters/HtmlToText.cs  HTML fallback for storage bodies
 │   ├── Safety/Safety.cs          masking, sanitizing
 │   └── Validators/Jql.cs         safe JQL builder

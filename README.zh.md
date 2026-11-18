@@ -8,8 +8,8 @@
 
 一个用于 Jira **和 Confluence** 的 Model Context Protocol (MCP) 服务器，使用 C# / .NET 10 实现。
 它把 Jira Cloud 的 REST 和 Agile API 暴露为 23 个 MCP 工具（issue 增删改查、搜索、评论、看板等），
-并把 Confluence Cloud REST API 暴露为 4 个只读的 wiki/页面/空间工具，同时提供 4 个提示词模板和
-4 个资源，使 Claude Code、Claude Desktop、Cursor 等 MCP 客户端可以直接读写 Jira issue 并读取
+并把 Confluence Cloud REST API 暴露为 6 个 wiki/页面/空间工具（4 个读、2 个写），同时提供 4 个提示词模板和
+4 个资源，使 Claude Code、Claude Desktop、Cursor 等 MCP 客户端可以直接读写 Jira issue 并读取、创建、更新
 Confluence 页面。
 
 ## 最近更新
@@ -40,7 +40,7 @@ Confluence 页面。
 ## 特性
 
 - **23 个 Jira 工具** —— issue 增删改查、搜索、评论、链接、状态流转、附件、工作日志、看板/冲刺
-- **4 个 Confluence 只读工具** —— 获取页面（按 id / URL / 标题）、CQL 搜索、列出/获取空间，基于 ADF 渲染文本
+- **6 个 Confluence 工具** —— 获取页面（按 id / URL / 标题）、CQL 搜索、列出/获取空间，基于 ADF 渲染文本；以及创建页面、写入页面内容（Markdown 或 storage 格式）
 - **4 个提示词模板** —— bug 报告、冲刺回顾、分诊、每日站会
 - **4 个 MCP 资源** —— 项目、项目元数据、issue 快照、状态流转
 - **双传输方式** —— stdio（本地，默认）和 Streamable HTTP（团队共享）
@@ -256,7 +256,7 @@ CLI 参数（例如 `--search-engine`）拥有最高优先级。
 | `user_email` | `JIRA_USER_EMAIL` | basic 认证使用的账号邮箱 | basic 必填 |
 | `api_token` | `JIRA_API_TOKEN` | Jira API 令牌 | —（必填） |
 | `project_keys` | `JIRA_PROJECT_KEYS` | 写入白名单，逗号分隔；空 = 全部 | — |
-| `tools` | `JIRA_TOOLS` | 工具白名单：`read,create,update,delete,write` 和/或工具名（逗号分隔）。在 `tools/list`（隐藏）和 `tools/call`（拒绝）两层强制。`read` 只暴露 18 个只读工具；`read,update` 增加 2 个更新工具，以此类推。空/未设置 = 全部 27 个工具。 | 空 = 全部 |
+| `tools` | `JIRA_TOOLS` | 工具白名单：`read,create,update,delete,write` 和/或工具名（逗号分隔）。在 `tools/list`（隐藏）和 `tools/call`（拒绝）两层强制。`read` 只暴露 22 个只读工具；`read,update` 增加 3 个更新工具，以此类推。空/未设置 = 全部 29 个工具。 | 空 = 全部 |
 | `search_engine` | `JIRA_SEARCH_ENGINE` | `jql`（默认）/ `get` / `auto`（增强版 search/jql 端点） | `jql` |
 | `rate_limit` | `JIRA_RATE_LIMIT` | 每分钟最大请求数 | `100` |
 | `request_timeout` | `JIRA_REQUEST_TIMEOUT` | 请求超时（秒） | `30` |
@@ -364,7 +364,7 @@ dotnet run --project src/JiraMcpServer -- --transport http --port 8080 --auth-mo
 /mcp
 ```
 
-你应该能看到 `jira` 服务器及其 27 个工具。然后可以自然地对话：
+你应该能看到 `jira` 服务器及其 29 个工具。然后可以自然地对话：
 
 > "搜索项目 PROJ 中所有未关闭的 bug"
 
@@ -374,7 +374,7 @@ Claude 会自动调用 `jira_search_issues`。
 
 ## 工具参考
 
-全部 27 个工具（23 个 Jira + 4 个 Confluence），按模块分组。每个工具的参数通过 MCP 的
+全部 29 个工具（23 个 Jira + 6 个 Confluence），按模块分组。每个工具的参数通过 MCP 的
 `inputSchema` 暴露给客户端。
 
 ### Issues（14 个）
@@ -434,7 +434,7 @@ Claude 会自动调用 `jira_search_issues`。
 | `jira_add_worklog` | 记录耗时（如 `2h 30m`） |
 | `jira_get_worklogs` | 获取 issue 的工作日志 |
 
-### Confluence（4 个，只读）
+### Confluence（6 个：4 个读、2 个写）
 
 读取使用 Confluence Cloud 经典 API（`/wiki/rest/api`），与 Jira 工具共用相同的服务端凭据、
 限流、重试和令牌脱敏。ADF 页面正文会被渲染为可读的纯文本；页面 URL 会被解析，因此粘贴一个
@@ -446,6 +446,15 @@ Claude 会自动调用 `jira_search_issues`。
 | `confluence_search` | 用 CQL 搜索页面/内容（如 `space = 'PE' AND text ~ 'bonus'`） |
 | `confluence_list_spaces` | 列出可访问的 Confluence 空间（key、名称、类型） |
 | `confluence_get_space` | 按 key 获取单个 Confluence 空间 |
+| `confluence_create_page` | 在空间中创建页面（可指定父页面）并写入内容 |
+| `confluence_update_page` | 向已有页面写入内容：替换整个正文或追加到末尾；版本号自动递增，可同时修改标题 |
+
+写入工具的内容支持 **Markdown**（默认；标题、无序/有序/嵌套列表、表格、围栏代码块、引用、
+粗体/斜体/删除线/行内代码和链接会被转换为 Confluence storage 格式），也可通过
+`body_format='storage'` 直接传入 Confluence **storage 格式** XHTML。Markdown 中的字面 `<`/`&`
+会被转义，`javascript:` 之类的链接协议会被丢弃。`confluence_create_page` 属于 `create` 权限类别，
+`confluence_update_page` 属于 `update`，因此限定为 `read` 的部署不会暴露它们。
+出于安全不提供删除页面；正文为空的更新会被拒绝，避免误清空页面（历史版本仍保留在页面历史中）。
 
 ---
 
@@ -489,13 +498,13 @@ Claude 会自动调用 `jira_search_issues`。
    工具名；也可以列出单个名称（逗号分隔，如 `read,update`）。通过两个 MCP 请求过滤器实现纵深防御：
    `tools/list` 隐藏未允许的工具，使模型不会把它们列出；`tools/call` 对它们的调用返回 `isError` 结果——
    因此一个限定为 `read` 的部署即使客户端绕过列表，也无法调用写工具。拼写错误会在启动时快速失败。
-   全部 27 个工具都被精确映射到一个类别（已验证：无遗漏、无重叠）：
+   全部 29 个工具都被精确映射到一个类别（已验证：无遗漏、无重叠）：
 
 | 类别 | 工具数量 | 示例工具 |
 |---|---|---|
 | `read` | 22 | `jira_get_issue`、`jira_search_issues`、`jira_list_projects`、`confluence_get_page`、`confluence_search`、`confluence_list_spaces`、`confluence_get_space` |
-| `create` | 6 | `jira_create_issue`、`jira_add_comment`、`jira_add_attachment`、`jira_add_worklog`、`jira_link_issues`、`jira_move_issues_to_sprint` |
-| `update` | 2 | `jira_update_issue`、`jira_transition_issue` |
+| `create` | 7 | `jira_create_issue`、`jira_add_comment`、`jira_add_attachment`、`jira_add_worklog`、`jira_link_issues`、`jira_move_issues_to_sprint`、`confluence_create_page` |
+| `update` | 3 | `jira_update_issue`、`jira_transition_issue`、`confluence_update_page` |
 | `delete` | 1 | `jira_delete_issue` |
 
 6. **强制 HTTPS** —— `base_url` 必须以 `https://` 开头；明文 HTTP 会被拒绝。
@@ -531,6 +540,7 @@ src/JiraMcpServer/
 │   ├── Errors/JiraError.cs       错误层级
 │   ├── Formatters/Adf.cs         ADF <-> 文本
 │   ├── Formatters/ConfluenceAdf.cs Confluence ADF 渲染器（表格、面板、媒体）
+│   ├── Formatters/ConfluenceStorage.cs Markdown → Confluence storage 格式（用于页面写入）
 │   ├── Formatters/HtmlToText.cs  storage 正文的 HTML 回退
 │   ├── Safety/Safety.cs          脱敏、清洗
 │   └── Validators/Jql.cs         安全的 JQL 构建器

@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using JiraMcpServer.Jira.Client;
 using JiraMcpServer.Jira.Errors;
+using JiraMcpServer.Jira.Formatters;
 using JiraMcpServer.Jira.Validators;
 using JiraMcpServer.Tools.Serde;
 using ModelContextProtocol.Protocol;
@@ -9,10 +10,12 @@ using ModelContextProtocol.Server;
 namespace JiraMcpServer.Tools.Confluence;
 
 /// <summary>
-/// Confluence Cloud read tools: page lookup (by id/URL/title across the wiki), CQL search,
-/// space listing/detail. All requests share the Jira client's credentials, rate limiter, and
-/// retry pipeline through <see cref="ConfluenceClient"/> (injected via
-/// <see cref="JiraToolContext"/>); only read operations are exposed.
+/// Confluence Cloud tools: page lookup (by id/URL/title across the wiki), CQL search,
+/// space listing/detail, plus page creation and content writes (create/update). All requests
+/// share the Jira client's credentials, rate limiter, and retry pipeline through
+/// <see cref="ConfluenceClient"/> (injected via <see cref="JiraToolContext"/>). The write tools
+/// are categorized as create/update in <c>Permissions</c>, so a <c>read</c>-scoped
+/// <c>JIRA_TOOLS</c> deployment never exposes them; page deletion is not offered.
 /// </summary>
 [McpServerToolType]
 public sealed class ConfluenceTools(JiraToolContext ctx)
@@ -198,9 +201,136 @@ public sealed class ConfluenceTools(JiraToolContext ctx)
         }
     }
 
+    [McpServerTool(Name = "confluence_create_page", Title = "Create a Confluence page")]
+    [Description("Create a new Confluence page in a space and write its content. The content is Markdown by default (headings, lists, tables, fenced code, bold/italic, links are converted to Confluence format); pass body_format='storage' to supply raw Confluence storage-format XHTML instead. Optionally nests the page under a parent page. Fails if a page with the same title already exists in the space.")]
+    public async Task<CallToolResult> CreatePageAsync(
+        [Description("Space key the page is created in, e.g. PE")] string spaceKey,
+        [Description("Page title (must be unique within the space)")] string title,
+        [Description("Page content in the format given by body_format; may be empty to create a blank page")] string body = "",
+        [Description("Optional parent page id or full page URL to nest the new page under; omitted = top level of the space")] string? parentId = null,
+        [Description("Content format: 'markdown' (default) or 'storage' (raw Confluence storage-format XHTML)")] string bodyFormat = "markdown",
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var space = ConfluenceUrl.NormalizeSpaceKey(spaceKey);
+            if (space.Length == 0)
+            {
+                return ToolResult.ErrorResult(new JiraValidationError("space_key must not be empty", statusCode: 400));
+            }
+
+            var pageTitle = title?.Trim() ?? "";
+            if (pageTitle.Length == 0)
+            {
+                return ToolResult.ErrorResult(new JiraValidationError("title must not be empty", statusCode: 400));
+            }
+
+            string? parent = null;
+            if (!string.IsNullOrWhiteSpace(parentId))
+            {
+                var parsedParent = ConfluenceUrl.TryParse(parentId);
+                if (!parsedParent.HasPageId)
+                {
+                    return ToolResult.ErrorResult(new JiraValidationError(
+                        "parent_id must be a numeric page id or a full page URL containing one", statusCode: 400));
+                }
+
+                parent = parsedParent.PageId;
+            }
+
+            var storage = ToStorage(body, bodyFormat);
+            var result = await Confluence.CreatePageAsync(space, pageTitle, storage, parent, cancellationToken);
+            EnsureUrl(result);
+            result["created"] = true;
+            return ToolResult.DictResult(result, "page");
+        }
+        catch (Exception exc)
+        {
+            return ToolResult.ErrorResult(exc);
+        }
+    }
+
+    [McpServerTool(Name = "confluence_update_page", Title = "Write content to a Confluence page")]
+    [Description("Write content to an existing Confluence page, replacing the whole body (mode='replace', default) or adding to the end of it (mode='append'). The page version is incremented automatically. The content is Markdown by default; pass body_format='storage' for raw Confluence storage-format XHTML. Optionally renames the page. In replace mode the previous body is overwritten (it stays available in the page history).")]
+    public async Task<CallToolResult> UpdatePageAsync(
+        [Description("Confluence page id (numeric) or a full page URL")] string pageIdOrUrl,
+        [Description("New content in the format given by body_format; must not be empty")] string body,
+        [Description("Write mode: 'replace' (default) overwrites the page body, 'append' adds the content after the existing body")] string mode = "replace",
+        [Description("Optional new page title; omitted = keep the current title")] string? title = null,
+        [Description("Content format: 'markdown' (default) or 'storage' (raw Confluence storage-format XHTML)")] string bodyFormat = "markdown",
+        [Description("Optional version comment shown in the page history")] string? versionMessage = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var parsed = ConfluenceUrl.TryParse(pageIdOrUrl);
+            if (!parsed.HasPageId)
+            {
+                return ToolResult.ErrorResult(new JiraValidationError(
+                    "page_id_or_url must be a numeric page id or a full page URL containing one; use confluence_search to find the id of a page by title",
+                    statusCode: 400));
+            }
+
+            var normalizedMode = mode?.Trim().ToLowerInvariant();
+            if (normalizedMode is not ("replace" or "append"))
+            {
+                return ToolResult.ErrorResult(new JiraValidationError("mode must be 'replace' or 'append'", statusCode: 400));
+            }
+
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                return ToolResult.ErrorResult(new JiraValidationError(
+                    "body must not be empty (an empty update would erase the page content)", statusCode: 400));
+            }
+
+            var storage = ToStorage(body, bodyFormat);
+            var result = await Confluence.UpdatePageAsync(
+                parsed.PageId!,
+                storage,
+                title,
+                append: normalizedMode == "append",
+                versionMessage,
+                cancellationToken);
+            EnsureUrl(result);
+            result["updated"] = true;
+            return ToolResult.DictResult(result, "page");
+        }
+        catch (Exception exc)
+        {
+            return ToolResult.ErrorResult(exc);
+        }
+    }
+
     // ------------------------------------------------------------------
     // Helpers
     // ------------------------------------------------------------------
+    /// <summary>Convert tool input to storage format according to <paramref name="bodyFormat"/>.</summary>
+    private static string ToStorage(string? body, string? bodyFormat)
+    {
+        return (bodyFormat?.Trim().ToLowerInvariant()) switch
+        {
+            null or "" or "markdown" or "md" => ConfluenceStorage.FromMarkdown(body),
+            "storage" => body ?? "",
+            _ => throw new JiraValidationError("body_format must be 'markdown' or 'storage'", statusCode: 400),
+        };
+    }
+
+    /// <summary>Fill in the page URL from the configured base URL when Confluence did not return one.</summary>
+    private void EnsureUrl(System.Text.Json.Nodes.JsonObject page)
+    {
+        if (!string.IsNullOrEmpty(ToolPayload.GetString(page, "url")))
+        {
+            return;
+        }
+
+        var id = ToolPayload.GetString(page, "id");
+        var space = ToolPayload.GetString(page, "spaceKey");
+        if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(space))
+        {
+            page["url"] = $"{_ctx.Settings.JiraBaseUrl}/wiki/spaces/{space}/pages/{id}";
+        }
+    }
+
     /// <summary>Resolve a page id by searching for an exact (falling back to prefix) title in a space.</summary>
     private async Task<string?> ResolveTitleToPageIdAsync(string title, string spaceKey, CancellationToken cancellationToken)
     {

@@ -42,12 +42,14 @@ public static class Permissions
         "jira_add_worklog",
         "jira_link_issues",
         "jira_move_issues_to_sprint",
+        "confluence_create_page",
     };
 
     public static readonly IReadOnlySet<string> UpdateTools = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         "jira_update_issue",
         "jira_transition_issue",
+        "confluence_update_page",
     };
 
     public static readonly IReadOnlySet<string> DeleteTools = new HashSet<string>(StringComparer.OrdinalIgnoreCase)

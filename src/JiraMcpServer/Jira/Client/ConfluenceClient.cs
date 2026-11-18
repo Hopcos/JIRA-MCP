@@ -9,7 +9,8 @@ namespace JiraMcpServer.Jira.Client;
 /// reusing the authenticated request pipeline of <see cref="JiraClient"/>. Confluence lives on the
 /// same Atlassian instance as Jira (under the <c>/wiki</c> path), so it shares the server's
 /// <c>base_url</c>, credentials, token-bucket rate limiter, retry/backoff, and per-request token
-/// masking. Only read operations are exposed; Confluence writes are out of scope for this server.
+/// masking. Reads (page/search/space) plus page create/update writes are exposed; page deletion
+/// is intentionally not.
 /// </summary>
 public sealed class ConfluenceClient
 {
@@ -160,6 +161,156 @@ public sealed class ConfluenceClient
             ["type"] = SafeString(root, "type"),
             ["id"] = SafeString(root, "id"),
         };
+    }
+
+    // ------------------------------------------------------------------
+    // Writes
+    // ------------------------------------------------------------------
+    /// <summary>
+    /// Create a page in a space. <paramref name="storageBody"/> is Confluence storage format
+    /// (XHTML); an optional <paramref name="parentId"/> nests the page under an existing page.
+    /// Returns a compact summary: id, title, spaceKey, versionNumber, url.
+    /// </summary>
+    public async Task<JsonObject> CreatePageAsync(
+        string spaceKey,
+        string title,
+        string storageBody,
+        string? parentId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var body = new JsonObject
+        {
+            ["type"] = "page",
+            ["status"] = "current",
+            ["title"] = title,
+            ["space"] = new JsonObject { ["key"] = spaceKey },
+            ["body"] = StorageBody(storageBody),
+        };
+
+        if (!string.IsNullOrEmpty(parentId))
+        {
+            body["ancestors"] = new JsonArray(new JsonObject { ["id"] = parentId });
+        }
+
+        using var response = await _jira.RequestAsync(HttpMethod.Post, "/wiki/rest/api/content", jsonBody: body, cancellationToken: cancellationToken);
+        using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        return BuildWriteSummary(doc.RootElement, fallbackSpaceKey: spaceKey);
+    }
+
+    /// <summary>
+    /// Write new content to an existing page. Confluence requires the next version number and the
+    /// title on every update, so the current page is read first. With <paramref name="append"/> the
+    /// new storage markup is added after the existing body; otherwise the body is replaced.
+    /// <paramref name="title"/> keeps the current title when null. Returns the same compact summary
+    /// as <see cref="CreatePageAsync"/> plus <c>previousVersion</c> and <c>mode</c>.
+    /// </summary>
+    public async Task<JsonObject> UpdatePageAsync(
+        string pageId,
+        string storageBody,
+        string? title = null,
+        bool append = false,
+        string? versionMessage = null,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new Dictionary<string, string?> { ["expand"] = "body.storage,version,space" };
+        string currentTitle;
+        string currentType;
+        string currentBody;
+        long currentVersion;
+        string? spaceKey;
+
+        using (var getResponse = await _jira.RequestAsync(HttpMethod.Get, $"/wiki/rest/api/content/{pageId}", query, cancellationToken: cancellationToken))
+        using (var getStream = await getResponse.Content.ReadAsStreamAsync(cancellationToken))
+        using (var getDoc = await JsonDocument.ParseAsync(getStream, cancellationToken: cancellationToken))
+        {
+            var current = getDoc.RootElement;
+            currentTitle = SafeString(current, "title") ?? "";
+            currentType = SafeString(current, "type") ?? "page";
+            currentBody = SafeString(current, "body", "storage", "value") ?? "";
+            spaceKey = current.TryGetProperty("space", out var space) && space.ValueKind == JsonValueKind.Object
+                ? SafeString(space, "key")
+                : null;
+
+            if (!current.TryGetProperty("version", out var version) ||
+                !version.TryGetProperty("number", out var number) ||
+                number.ValueKind != JsonValueKind.Number)
+            {
+                throw new Errors.JiraApiError($"Confluence page {pageId} did not report a version number; cannot update", statusCode: null);
+            }
+
+            currentVersion = number.GetInt64();
+        }
+
+        var versionNode = new JsonObject { ["number"] = currentVersion + 1 };
+        if (!string.IsNullOrWhiteSpace(versionMessage))
+        {
+            versionNode["message"] = versionMessage;
+        }
+
+        var body = new JsonObject
+        {
+            ["id"] = pageId,
+            ["type"] = currentType,
+            ["status"] = "current",
+            ["title"] = string.IsNullOrWhiteSpace(title) ? currentTitle : title,
+            ["version"] = versionNode,
+            ["body"] = StorageBody(append ? currentBody + storageBody : storageBody),
+        };
+
+        using var response = await _jira.RequestAsync(HttpMethod.Put, $"/wiki/rest/api/content/{pageId}", jsonBody: body, cancellationToken: cancellationToken);
+        using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+
+        var summary = BuildWriteSummary(doc.RootElement, fallbackSpaceKey: spaceKey);
+        summary["previousVersion"] = currentVersion;
+        summary["mode"] = append ? "append" : "replace";
+        return summary;
+    }
+
+    private static JsonObject StorageBody(string storageValue) => new()
+    {
+        ["storage"] = new JsonObject
+        {
+            ["value"] = storageValue,
+            ["representation"] = "storage",
+        },
+    };
+
+    /// <summary>Compact result of a create/update: id, title, spaceKey, versionNumber, url.</summary>
+    private static JsonObject BuildWriteSummary(JsonElement root, string? fallbackSpaceKey)
+    {
+        var id = SafeString(root, "id");
+        var spaceKey = root.TryGetProperty("space", out var space) && space.ValueKind == JsonValueKind.Object
+            ? SafeString(space, "key")
+            : null;
+
+        var summary = new JsonObject
+        {
+            ["id"] = id,
+            ["title"] = SafeString(root, "title"),
+            ["spaceKey"] = spaceKey ?? fallbackSpaceKey,
+            ["versionNumber"] = root.TryGetProperty("version", out var version) && version.ValueKind == JsonValueKind.Object &&
+                                version.TryGetProperty("number", out var number) && number.ValueKind == JsonValueKind.Number
+                ? number.GetInt64()
+                : (long?)null,
+        };
+
+        if (root.TryGetProperty("_links", out var links) && links.ValueKind == JsonValueKind.Object)
+        {
+            var baseUrl = links.TryGetProperty("base", out var b) && b.ValueKind == JsonValueKind.String ? b.GetString() : null;
+            var webui = links.TryGetProperty("webui", out var w) && w.ValueKind == JsonValueKind.String ? w.GetString() : null;
+            if (!string.IsNullOrEmpty(baseUrl))
+            {
+                summary["url"] = baseUrl.TrimEnd('/') + webui;
+            }
+            else if (!string.IsNullOrEmpty(webui))
+            {
+                summary["url"] = webui;
+            }
+        }
+
+        return summary;
     }
 
     // ------------------------------------------------------------------

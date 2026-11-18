@@ -2,6 +2,7 @@
   <Folder Name="/Solution Items/">
     <File Path=".gitignore" />
     <File Path="README.md" />
+    <File Path="README.zh.md" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/JiraMcpServer/JiraMcpServer.csproj" />
