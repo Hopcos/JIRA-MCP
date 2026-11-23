@@ -528,7 +528,9 @@ public sealed class JiraClient : IDisposable
             fields["parent"] = new JsonObject { ["key"] = parentKey };
         }
 
-        return await RequestJsonAsync(HttpMethod.Post, "/rest/api/3/issue", jsonBody: fields, cancellationToken: cancellationToken);
+        // Jira's create endpoint requires the field map under a top-level "fields" key; sending the
+        // map bare makes Jira report "project: Specify a valid project ID or key".
+        return await RequestJsonAsync(HttpMethod.Post, "/rest/api/3/issue", jsonBody: new JsonObject { ["fields"] = fields }, cancellationToken: cancellationToken);
     }
 
     public async Task<JsonNode?> UpdateIssueAsync(string issueKey, IDictionary<string, JsonNode?>? fields, bool? notifyUsers, CancellationToken cancellationToken = default)

@@ -81,7 +81,14 @@ public class JiraClientUpdateTests
             customFields: custom);
 
         var body = JsonNode.Parse(handler.LastBody!)!.AsObject();
-        Assert.Equal("value", body["customfield_10010"]!.GetValue<string>());
+        // Jira requires every field under a top-level "fields" key (regression: bare map => 400
+        // "project: Specify a valid project ID or key").
+        Assert.False(body.ContainsKey("project"));
+        var sent = body["fields"]!.AsObject();
+        Assert.Equal("value", sent["customfield_10010"]!.GetValue<string>());
+        Assert.Equal("PROJ", sent["project"]!["key"]!.GetValue<string>());
+        Assert.Equal("Summary", sent["summary"]!.GetValue<string>());
+        Assert.Equal("Task", sent["issuetype"]!["name"]!.GetValue<string>());
     }
 
     private static (JiraClient Client, CapturingHandler Handler) CreateClient()
